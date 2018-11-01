@@ -14,7 +14,7 @@ def load_ground_truth(path):
     img = mat['groundTruth']['Segmentation']
     return  img[0,0]
 
-def sample(img, grd_mask, pos_neg_ratio, h):
+def sample_img(img, grd_mask, pos_neg_ratio, h):
     #grd_mask = skeletonize(grd_mask > 1)
     pos_mask = (grd_mask > 1).astype(np.float32)
     pos_idxs = np.nonzero(pos_mask)
@@ -32,6 +32,7 @@ def sample(img, grd_mask, pos_neg_ratio, h):
         patch = (patch.astype(np.float)/255.0)
         patch_msk = pos_mask[p0 - h:p0 + h + 1, p1 - h:p1 + h + 1]
         patch_msk = cv.resize(patch_msk, (5,5), cv.INTER_AREA)
+        patch_msk = (patch_msk > 0).astype(np.int32)
         patch_msk = patch_msk.flatten()
         if (patch.shape != (27,27,3)):
             print(patch.shape)
@@ -69,10 +70,10 @@ def sample(img, grd_mask, pos_neg_ratio, h):
 
         patch = (patch.astype(np.float)/255.0)
         neg_samples.append(patch)
-        mask = np.zeros(shape=25, dtype=np.float)
+        mask = np.zeros(shape=25, dtype=np.int)
         neg_masks.append(mask)
 
-    return np.array(pos_samples), np.array(pos_masks), np.array(neg_samples), np.array(neg_masks)
+    return pos_samples, pos_masks, neg_samples, neg_masks
 
 def load_and_randomize_data(file_names, DATA_POS_DIR, MASK_POS_DIR, DATA_NEG_DIR, MASK_NEG_DIR):
     samples = []
@@ -118,52 +119,34 @@ if __name__ == '__main__':
 
     IMG_DIR = f'{IN_DIR}/image/'
     GRD_DIR = f'{IN_DIR}/groundTruth/'
-    DATA_POS_DIR = f'{OUT_DIR}/pos/'
-    DATA_NEG_DIR = f'{OUT_DIR}/neg/'
-    MASK_POS_DIR = f'{OUT_DIR}/pos_mask/'
-    MASK_NEG_DIR = f'{OUT_DIR}/neg_mask/'
 
-    if update > 0:
-        os.makedirs(DATA_POS_DIR, exist_ok = True)
-        os.makedirs(DATA_NEG_DIR, exist_ok = True)
-        os.makedirs(MASK_POS_DIR, exist_ok = True)
-        os.makedirs(MASK_NEG_DIR, exist_ok = True)
+    SAMPLE_DIR  = f'{OUT_DIR}/samples/'
+    MASK_DIR    = f'{OUT_DIR}/masks/'
 
-        for img_path in Path(IMG_DIR).glob('*.*'):
-            truth_path = f'{GRD_DIR}{img_path.stem}.mat'
-            if not os.path.isfile(truth_path):
-                continue
-            img = cv.imread(str(img_path))
-            mask = load_ground_truth(truth_path)
-            pos_samples, pos_masks, neg_samples, neg_masks = sample(img, mask, pos_neg_ratio=3, h=13)
+    sample_paths = []
+    os.makedirs(SAMPLE_DIR, exist_ok=True)
+    os.makedirs(MASK_DIR, exist_ok=True)
+    n_files = len([p for p in Path(IMG_DIR).glob('*.*')])
+    for i, img_path in enumerate(Path(IMG_DIR).glob('*.*')):
+        truth_path = f'{GRD_DIR}{img_path.stem}.mat'
+        if not os.path.isfile(truth_path):
+            continue
+        img = cv.imread(str(img_path))
+        mask = load_ground_truth(truth_path)
+        pos_samples, pos_masks, neg_samples, neg_masks = sample_img(img, mask, pos_neg_ratio=3, h=13)
+        assert len(pos_samples) == len(pos_masks)
+        print(f'{float(i)/float(n_files)*100}%, {img_path.stem}: n_pos = {len(pos_samples)}, n_neg = {len(neg_samples)}')
+        cnt = 0
+        for sample, mask in zip(pos_samples, pos_masks):
+            spl_path = f'{SAMPLE_DIR}{img_path.stem}_{cnt}'
+            np.save(spl_path, sample)
+            msk_path = f'{MASK_DIR}{img_path.stem}_{cnt}'
+            np.save(msk_path, mask)
+            cnt += 1
 
-            sample_path = f'{DATA_POS_DIR}{img_path.stem}'
-            np.save(sample_path, pos_samples)
-
-            sample_path = f'{MASK_POS_DIR}{img_path.stem}'
-            np.save(sample_path, pos_masks)
-
-            sample_path = f'{DATA_NEG_DIR}{img_path.stem}'
-            np.save(sample_path, neg_samples)
-
-            sample_path = f'{MASK_NEG_DIR}{img_path.stem}'
-            np.save(sample_path, neg_masks)
-
-            assert len(pos_samples) == len(pos_masks)
-            print(f'{img_path.stem}: n_pos = {len(pos_samples)}, n_neg = {len(neg_samples)}')
-
-    names = [fpath.name for fpath in Path(DATA_POS_DIR).glob('*.*')]
-
-    split = int(0.7 * (len(names)))
-    train_files = names[0:5]
-    test_files = names[30:32]
-
-    train_x, train_y = load_and_randomize_data(train_files, DATA_POS_DIR, MASK_POS_DIR, DATA_NEG_DIR, MASK_NEG_DIR)
-    with open(f'{OUT_DIR}/train.pkl', mode='wb') as f:
-        pickle.dump({'X':train_x, 'Y':train_y}, f)
-    del train_x
-    del train_y
-
-    test_x, test_y = load_and_randomize_data(test_files, DATA_POS_DIR, MASK_POS_DIR, DATA_NEG_DIR, MASK_NEG_DIR)
-    with open(f'{OUT_DIR}/test.pkl', mode='wb') as f:
-        pickle.dump({'X':test_x, 'Y':test_y}, f)
+        for sample, mask in zip(neg_samples, neg_masks):
+            spl_path = f'{SAMPLE_DIR}{img_path.stem}_{cnt}'
+            np.save(spl_path, sample)
+            msk_path = f'{MASK_DIR}{img_path.stem}_{cnt}'
+            np.save(msk_path, mask)
+            cnt += 1
